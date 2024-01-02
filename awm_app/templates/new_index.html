@@ -1,0 +1,434 @@
+{% extends "base.html" %}
+
+{% block content %}
+{% load leaflet_tags %}
+{% leaflet_js %}
+{% leaflet_css %}
+{% if user.is_authenticated %}
+    <title>User Locations Map</title>
+    User Locations
+
+    <!-- Home Page -->
+    <div id='home_page'>
+        <nav class="navbar navbar-expand-md navbar-dark fixed-top bg-dark">
+            <a class="navbar-brand" href="#">Night Out Manager</a>
+        </nav>
+
+        <br><br>
+        <div class="container mt-4">
+            <h2>Hello {{ user.username }}</h2>
+            <div class="input-group mt-3">
+                <input type="text" class="form-control" id="groupCodeInput" placeholder="Enter Group Code" aria-label="Enter Group Code" aria-describedby="basic-addon2">
+                <div class="input-group-append">
+                    <button type="button" class="btn btn-primary" onclick="joinOrCreateGroup()">Join/Create Group</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+
+
+    <!-- Map Page -->
+    <div id='map_page' style="display: none">
+        <br><br>
+        <div class="container">
+            <div class="row">
+                <div class="col">
+                    <h2 id="group_code_text">Group Code : </h2>
+                </div>
+                <div class="col text-right"> <!-- Add the "text-right" class to align content to the right -->
+                    <button id="deleteButton" class="btn btn-danger" onclick="deleteGroup()">Delete Group</button>
+                </div>
+            </div>
+        </div>
+        <div id="map" style="height: 500px;"></div>
+        <br>
+        <div class="container">
+            <div class="row">
+                <div class="col">
+                    <h1>Nearby Pub list</h1>
+                    <ul id="pub_list"></ul>
+                </div>
+                <div class="col">
+                    <h1>Vote list</h1>
+                    <ul id="vote_list"></ul>
+                    <ul id = "no_vote_yet">No Votes Yet</ul>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <style>
+        #pub_list:hover {
+          cursor: pointer; /* or any other cursor value you prefer */
+        }
+
+        .pub_marker {
+            text-align: center;
+            line-height: 35px;
+            font-size: 35px;
+            color: #000d33;
+        }
+        .player_marker {
+            text-align: center;
+            line-height: 45px;
+            font-size: 45px;
+            color: #225fc9;
+        }
+    </style>
+
+    <script>
+        // Global Variables
+        let groupCode = ''
+        let voted = false
+        // Map Varaibles
+        const mymap = L.map('map');
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '© OpenStreetMap contributors'
+            }).addTo(mymap);
+        let pubMarkers = L.featureGroup()
+        let markerGroup = L.featureGroup()
+
+        // Function to Join or Create Group
+        async function joinOrCreateGroup(){
+            const tempGroupCode = document.getElementById("groupCodeInput").value;
+                if(tempGroupCode !== ''){
+                    groupCode = tempGroupCode
+                    const mapPage = document.getElementById('map_page');
+                    const group_code_text = document.getElementById('group_code_text');
+                    mapPage.style.display = '';
+                    group_code_text.innerHTML = 'Group Code : ' + String(groupCode);
+                    await updateProfileData("button");
+                    await initiateMapData();
+                }
+                else{
+                    alert("Group code can't be blank")
+                }
+        }
+
+        // InitialiseMap
+        async function initiateMapData(){
+            let userLocations = await getAllGroupUserLocations();
+            let currentUserData = await getCurrentUserData();
+            userLocations.push(currentUserData)
+            if (mymap.hasLayer(markerGroup)){
+                    mymap.removeLayer(markerGroup);
+                }
+            if(userLocations){
+                const markers = userLocations.map(createMarker);
+                markerGroup = L.featureGroup(markers).addTo(mymap);
+                mymap.fitBounds(markerGroup.getBounds());
+            }
+
+            function createMarker(location) {
+                const pinIcon = L.divIcon({
+                        className: 'player_marker',
+                        html: '<i class="fa-solid fa-location-dot"></i>',
+                        iconSize: [45, 45],
+                        iconAnchor: [23, 45],
+                    });
+
+                const timestamp = new Date(location.timestamp).toLocaleString();
+                return L.marker([location.lat, location.lon], { icon: pinIcon })
+                    .bindPopup(`User: ${location.user__username}<br>Timestamp: ${timestamp}`);
+
+            }
+        }
+
+        // Get all user locations in current group
+        async function getAllGroupUserLocations() {
+            try {
+                const response = await fetch(`/get_user_locations/?group_code=${groupCode}&username={{ user.username }}`);
+                const data = await response.json();
+                return data;
+            } catch (error) {
+                console.error('Error fetching user locations:', error);
+                return null;
+            }
+        }
+        
+        async function getCurrentUserData() {
+            try {
+                const response = await fetch(`/get_current_user/?username={{ user.username }}`);
+                const data = await response.json();
+                return data;
+            } catch (error) {
+                console.error('Error fetching user locations:', error);
+                return null;
+            }
+        }
+
+        //Update the user profile
+        async function updateProfileData(source){
+            //Get current gps location
+            if ('geolocation' in navigator) {
+                navigator.geolocation.getCurrentPosition(onSuccess, onError);
+            } else {
+                alert('Geolocation is not supported by your browser');
+            }
+            //If success on getting gps location
+            function onSuccess(position) {
+                let latitude = position.coords.latitude;
+                let longitude = position.coords.longitude;
+                if(source === "button"){
+                    makePubList(latitude, longitude)
+                }
+                
+
+                // Send a POST request to the Django view
+                fetch('/update_location/', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': '{{ csrf_token }}',
+                    },
+                    body: JSON.stringify({
+                        latitude: latitude,
+                        longitude: longitude,
+                        groupCode, groupCode,
+                    }),
+                })
+                .then(response => response.json())
+                .catch(error => {
+                console.error('Error updating location:', error);
+                });
+                
+            }
+            function onError(error) {
+                alert('Error getting your location: ' + error.message);
+            }
+            
+        }
+
+        // Generate a list of nearby pubs
+        async function makePubList(lat,lon){
+            const pubList  = document.getElementById('pub_list');
+            //Delete old list
+            while (pubList.firstChild) {
+                pubList.removeChild(pubList.firstChild);
+            }
+
+            //Generate new pub list
+            const pubs = await getPubsInLocation(lat, lon);
+            if (pubs) {
+                // Generate a list of pubs below the map with a checkbox
+                pubs.forEach(pub => {
+                    const listItem = document.createElement('li');
+
+                    // Create a checkbox
+                    const checkbox = document.createElement('input');
+                    checkbox.type = 'checkbox';
+                    listItem.appendChild(checkbox);
+
+                    // Add pub name text
+                    const pubNameText = document.createElement('span');
+                    pubNameText.textContent = pub.name;
+                    listItem.appendChild(pubNameText);
+
+                    // Add click event to focus on pub
+                    listItem.addEventListener('click', () => focusOnPub(pub));
+
+                    pubList.appendChild(listItem);
+                });
+                function focusOnPub(pub) {
+                    mymap.setView([pub.latitude, pub.longitude], 25);
+                }
+            
+                // Create a submit button
+                const submitButton = document.createElement('button');
+                submitButton.textContent = 'Submit Vote';
+                submitButton.addEventListener('click', handleSubmitVote);
+                pubList.appendChild(submitButton);
+
+                // Create Pub Markers
+                // If layer already exists, delete it
+                if (mymap.hasLayer(pubMarkers)){
+                    mymap.removeLayer(pubMarkers);
+                }
+                const markers = pubs.map(createMarker);
+                pubMarkers = L.featureGroup(markers).addTo(mymap);
+        
+                function createMarker(pub) {
+                    const pinIcon = L.divIcon({
+                        className: 'pub_marker',
+                        html: '<i class="fa-solid fa-map-pin"></i>',
+                        iconSize: [35, 35],
+                        iconAnchor: [17, 35],
+                    });
+
+                    return L.marker([pub.latitude, pub.longitude], { icon: pinIcon })
+                        .bindPopup(pub.name);
+                }
+
+
+
+            } else {
+                console.error('Error fetching pubs.');
+            }
+        }
+
+        // Submit Pubs vote
+        async function handleSubmitVote() {
+            if(voted === false) {
+                const checkedPubs = [];
+
+                // Iterate through the list items and check if the checkbox is checked
+                const pubList = document.getElementById('pub_list');
+                const listItems = pubList.getElementsByTagName('li');
+
+                for (let i = 0; i < listItems.length; i++) {
+                    const listItem = listItems[i];
+                    const checkbox = listItem.querySelector('input[type="checkbox"]');
+                    const pubName = listItem.querySelector('span').textContent;
+
+                    if (checkbox.checked) {
+                        checkedPubs.push(pubName);
+                    }
+                }
+
+
+                // Send a POST request to the Django view
+                fetch('/update_group/', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': '{{ csrf_token }}',
+                    },
+                    body: JSON.stringify({
+                        groupCode: groupCode,
+                        pubList: checkedPubs,
+                    }),
+                })
+                    .then(response => response.json())
+                    .catch(error => {
+                        console.error('Error updating group:', error);
+                    });
+                alert("Vote Submitted!")
+                voted = true
+                await updateVoteList()
+
+            }
+            else{
+                alert("You can only vote once")
+            }
+        }
+
+        //Request a list of all nearby pubs
+        async function getPubsInLocation(lat, lon) {
+            try {
+                const response = await fetch(`/get_pubs_in_location/?lat=${lat}&lon=${lon}`);
+                const data = await response.json();
+                return data.pubs;
+            } catch (error) {
+                console.error('Error fetching pubs:', error);
+                return null;
+            }
+        }
+
+        // Update all user locations, pub locations and vote values
+        async function updateAllLocations() {
+            await updateProfileData("timer");
+            let userLocations = await getAllGroupUserLocations();
+            let currentUserData = await getCurrentUserData();
+            userLocations.push(currentUserData);
+            if (userLocations) {
+                mymap.removeLayer(markerGroup);
+                const markers = userLocations.map(createMarker);
+                markerGroup = L.featureGroup(markers).addTo(mymap);
+            }
+
+            function createMarker(location) {
+                const pinIcon = L.divIcon({
+                        className: 'player_marker',
+                        html: '<i class="fa-solid fa-location-dot"></i>',
+                        iconSize: [45, 45],
+                        iconAnchor: [23, 45],
+                    });
+
+
+                const timestamp = new Date(location.timestamp).toLocaleString();
+                return L.marker([location.lat, location.lon], { icon: pinIcon })
+                    .bindPopup(`User: ${location.user__username}<br>Timestamp: ${timestamp}`);
+
+            }
+
+            await updateVoteList();
+        }
+
+        // Update the list of votes when there are values
+        async function updateVoteList(){
+            const voteList  = document.getElementById('vote_list');
+            const noVotes  = document.getElementById('no_vote_yet');
+            //Delete old list
+            while (voteList.firstChild) {
+                voteList.removeChild(voteList.firstChild);
+                noVotes.innerHTML = ""
+            }
+            const vote_values = await getVoteValues();
+            if(vote_values.votes.length > 0){
+                vote_values.votes.forEach(vote => {
+                    const listItem = document.createElement('li');
+
+                    // Add vote name text
+                    const voteValue = document.createElement('span');
+                    voteValue.textContent = vote;
+                    listItem.appendChild(voteValue);
+
+                    voteList.appendChild(listItem);
+                });
+            }
+        }
+
+        // Get vote values
+        async function getVoteValues() {
+            try {
+                const response = await fetch(`/get_vote_values/?groupCode=${groupCode}`);
+                const data = await response.json();
+                return data;
+            } catch (error) {
+                console.error('Error fetching vote values:', error);
+                return null;
+            }
+        }
+
+        //Delete group function
+        async function deleteGroup() {
+            try {
+                const response = await fetch(`/delete_group/?groupCode=${groupCode}`, {
+                    method: 'DELETE',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': '{{ csrf_token }}',
+                    },
+                });
+
+                const data = await response.json();
+                if (data.status === 'success') {
+                    alert('Group deleted successfully!');
+                    location.reload();
+
+                }
+            } catch (error) {
+                console.error('Error deleting group:', error);
+            }
+        }
+
+
+        //Update new values every 5 seconds
+        setInterval(updateAllLocations, 5000);
+
+    </script>
+
+
+
+
+
+
+
+
+
+{% else %}
+  <p>You are not logged in</p>
+  <a href="{% url 'login' %}">Log In</a>
+{% endif %}
+{% endblock %}

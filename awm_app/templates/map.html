@@ -1,0 +1,121 @@
+{% extends "base.html" %}
+
+{% block content %}
+{% load leaflet_tags %}
+{% leaflet_js %}
+{% leaflet_css %}
+{% if user.is_authenticated %}
+    <title>User Locations Map</title>
+    User Locations
+    {% leaflet_map 'map' %}
+    <style>#map {height: 500px;} </style>
+    <div id="map" style="height: 500px;"></div>
+
+    <script>
+        const mymap = L.map('map');
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '© OpenStreetMap contributors'
+            }).addTo(mymap);
+
+        let userLocations = [];
+        let markers = userLocations.map(createMarker);
+        let markerGroup = L.featureGroup(markers).addTo(mymap);
+
+        async function initialMapUpdate() {
+            userLocations = await getUserLocations();
+            markers = userLocations.map(createMarker);
+            markerGroup = L.featureGroup(markers).addTo(mymap);
+            mymap.fitBounds(markerGroup.getBounds());
+        }
+        initialMapUpdate();
+
+
+
+        async function updateMap() {
+            userLocations = await getUserLocations();
+            console.log(userLocations);
+
+            if (userLocations) {
+                mymap.removeLayer(markerGroup);
+                markers = userLocations.map(createMarker);
+                markerGroup = L.featureGroup(markers).addTo(mymap);
+            }
+        }
+
+        async function getUserLocations() {
+            try {
+                const response = await fetch('/get_user_locations/');
+                const data = await response.json();
+                return data;
+            } catch (error) {
+                console.error('Error fetching user locations:', error);
+                return null;
+            }
+        }
+
+        function createMarker(location) {
+            return L.marker([location.lat, location.lon])
+                .bindPopup(`User: ${location.user__username}<br>Timestamp: ${location.timestamp}`);
+        }
+
+
+        function getUserLocation() {
+            if ('geolocation' in navigator) {
+                navigator.geolocation.getCurrentPosition(onSuccess, onError);
+            } else {
+                alert('Geolocation is not supported by your browser');
+            }
+        }
+
+        function onSuccess(position) {
+            let latitude = position.coords.latitude;
+            let longitude = position.coords.longitude;
+
+            updateDatabaseWithLocation(latitude, longitude);
+        }
+
+        function onError(error) {
+            alert('Error getting your location: ' + error.message);
+        }
+
+        function updateDatabaseWithLocation(latitude, longitude) {
+            // Send a POST request to the Django view
+            fetch('/update_location/', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': '{{ csrf_token }}',  // Include CSRF token
+                },
+                body: JSON.stringify({
+                    latitude: latitude,
+                    longitude: longitude,
+                }),
+            })
+            .then(response => response.json())
+            .then(data => {
+                console.log(data);
+            })
+            .catch(error => {
+                console.error('Error updating location:', error);
+            });
+        }
+
+        setInterval(getUserLocation, 3000);
+        setInterval(updateMap, 3000);
+    </script>
+
+
+
+
+
+
+
+
+
+
+
+{% else %}
+  <p>You are not logged in</p>
+  <a href="{% url 'login' %}">Log In</a>
+{% endif %}
+{% endblock %}

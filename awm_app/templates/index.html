@@ -1,0 +1,277 @@
+{% extends "base.html" %}
+
+{% block content %}
+{% load leaflet_tags %}
+{% leaflet_js %}
+{% leaflet_css %}
+{% if user.is_authenticated %}
+    <title>User Locations Map</title>
+    User Locations
+
+    <!-- Home Page -->
+    <div id='home_page'>
+        <nav class="navbar navbar-expand-md navbar-dark fixed-top bg-dark">
+            <a class="navbar-brand" href="#">Night-Manager</a>
+        </nav>
+
+        <br><br>
+        <div class="container mt-4">
+            <h2>Hello {{ user.username }}</h2>
+            <div class="input-group mt-3">
+                <input type="text" class="form-control" id="groupCodeInput" placeholder="Enter Group Code" aria-label="Enter Group Code" aria-describedby="basic-addon2">
+                <div class="input-group-append">
+                    <button type="button" class="btn btn-primary" onclick="joinOrCreateGroup()">Join/Create Group</button>
+                </div>
+            </div>
+        </div>
+
+        <script>
+            let groupCode = ''
+            function joinOrCreateGroup() {
+                const tempGroupCode = document.getElementById("groupCodeInput").value;
+                if(tempGroupCode !== ''){
+                    groupCode = tempGroupCode
+                    const mapPage = document.getElementById('map_page');
+                    mapPage.style.display = '';
+                    initialMapUpdate();
+                    getCurrentLocation();
+                    makeListOfPubs();
+                }
+                else{
+                    alert("Group code can't be blank")
+                }
+            }
+
+            async function makeListOfPubs() {
+                if ('geolocation' in navigator) {
+                    navigator.geolocation.getCurrentPosition(LocalOnSuccess, LocalOnError);
+                } else {
+                    alert('Geolocation is not supported by your browser');
+                }
+
+                async function LocalOnSuccess(position) {
+                    try {
+                        let latitude = position.coords.latitude;
+                        let longitude = position.coords.longitude;
+
+                        const pubs = await getPubsInLocation(latitude, longitude);
+                        if (pubs) {
+                            createPubDisplayInfo(pubs)
+                        } else {
+                            console.error('Error fetching pubs.');
+                        }
+                    } catch (error) {
+                        console.error('Error getting pubs:', error);
+                    }
+                }
+                function LocalOnError(error) {
+                    alert('Error getting your location: ' + error.message);
+                }
+            }
+
+            function createPubDisplayInfo(pubs){
+                const pubNames = pubs.map(pub => pub.name);
+                const pubList  = document.getElementById('pub_list');
+                pubs.forEach(pub => {
+                    const listItem = document.createElement('li');
+
+                    // Create a checkbox
+                    const checkbox = document.createElement('input');
+                    checkbox.type = 'checkbox';
+                    listItem.appendChild(checkbox);
+
+                    // Add pub name text
+                    const pubNameText = document.createElement('span');
+                    pubNameText.textContent = pub.name;
+                    listItem.appendChild(pubNameText);
+
+                    // Add click event to focus on pub
+                    listItem.addEventListener('click', () => focusOnPub(pub));
+
+                    pubList.appendChild(listItem);
+                });
+                // Create a submit button
+                const submitButton = document.createElement('button');
+                submitButton.textContent = 'Submit Vote';
+                submitButton.addEventListener('click', handleSubmitVote);
+                pubList.appendChild(submitButton);
+
+                const pubMarkers = L.layerGroup()
+                if (mymap.hasLayer(pubMarkers)){
+                    console.log("Has marker")
+                    mymap.removeLayer(pubMarkers);
+                }
+                pubMarkers.addTo(mymap);
+
+                pubs.forEach(pub => {
+                    const marker = L.marker([pub.latitude, pub.longitude])
+                        .bindPopup(pub.name);
+
+                    pubMarkers.addLayer(marker);
+                });
+
+                const overlayMaps = {
+                    'Pubs': pubMarkers,
+                };
+
+                L.control.layers(null, overlayMaps).addTo(mymap)
+            }
+
+            function focusOnPub(pub) {
+                mymap.setView([pub.latitude, pub.longitude], 25);
+            }
+            function handleSubmitVote() {
+                // Your code to handle the submit vote button click
+                console.log('Vote submitted');
+            }
+
+            async function getPubsInLocation(lat, lon) {
+                try {
+                    const response = await fetch(`/get_pubs_in_location/?lat=${lat}&lon=${lon}`);
+                    const data = await response.json();
+                    return data.pubs;
+                } catch (error) {
+                    console.error('Error fetching pubs:', error);
+                    return null;
+                }
+            }
+        </script>
+    </div>
+
+
+
+    <!-- Map Page -->
+    <div id = 'map_page' style="display: none">
+        <br><br>
+        <div id="map" style="height: 500px;"></div>
+
+    <script>
+        const mymap = L.map('map');
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '© OpenStreetMap contributors'
+            }).addTo(mymap);
+
+        let GlobalUserLocations = [];
+        let markers = GlobalUserLocations.map(createMarker);
+        let markerGroup = L.featureGroup(markers).addTo(mymap);
+
+
+        async function initialMapUpdate() {
+            userLocations = await getUserLocations();
+            console.log(userLocations);
+                if (userLocations) {
+                    markers = userLocations.map(createMarker);
+                    console.log(markers);
+                    markerGroup = L.featureGroup(markers).addTo(mymap);
+                    console.log(markerGroup);
+                    mymap.fitBounds(markerGroup.getBounds());
+                    GlobalUserLocations = userLocations;
+                }
+        }
+
+
+
+        async function updateMap() {
+            if(groupCode !== ''){
+               GlobalUserLocations = await getUserLocations();
+
+                if (GlobalUserLocations) {
+                    mymap.removeLayer(markerGroup);
+                    markers = GlobalUserLocations.map(createMarker);
+                    markerGroup = L.featureGroup(markers).addTo(mymap);
+                }
+            }
+        }
+
+        async function getUserLocations() {
+            try {
+                const response = await fetch(`/get_user_locations/?group_code=${groupCode}`);
+                const data = await response.json();
+                return data;
+            } catch (error) {
+                console.error('Error fetching user locations:', error);
+                return null;
+            }
+        }
+
+
+        function createMarker(location) {
+            return L.marker([location.lat, location.lon])
+                .bindPopup(`User: ${location.user__username}<br>Timestamp: ${location.timestamp}`);
+        }
+
+
+        function getCurrentLocation() {
+            if ('geolocation' in navigator) {
+                navigator.geolocation.getCurrentPosition(onSuccess, onError);
+            } else {
+                alert('Geolocation is not supported by your browser');
+            }
+        }
+
+        function onSuccess(position) {
+            let latitude = position.coords.latitude;
+            let longitude = position.coords.longitude;
+
+            updateDatabaseWithLocation(latitude, longitude);
+        }
+
+        function onError(error) {
+            alert('Error getting your location: ' + error.message);
+        }
+
+        
+        function updateDatabaseWithLocation(latitude, longitude) {
+            // Send a POST request to the Django view
+            fetch('/update_location/', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': '{{ csrf_token }}',
+                },
+                body: JSON.stringify({
+                    latitude: latitude,
+                    longitude: longitude,
+                    groupCode, groupCode,
+                }),
+            })
+            .then(response => response.json())
+            .then(data => {
+
+            })
+            .catch(error => {
+                console.error('Error updating location:', error);
+            });
+        }
+
+        setInterval(getCurrentLocation, 3000);
+        setInterval(updateMap, 3000);
+    </script>
+
+
+    <br>
+    <h1>Nearby Pub list</h1>
+    <ul id = "pub_list"></ul>
+    </div>
+
+    <style>
+        #pub_list:hover {
+          cursor: pointer; /* or any other cursor value you prefer */
+        }
+
+    </style>
+
+
+
+
+
+
+
+
+
+
+{% else %}
+  <p>You are not logged in</p>
+  <a href="{% url 'login' %}">Log In</a>
+{% endif %}
+{% endblock %}
